@@ -37,7 +37,11 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DO_SSH_KEY }}
 
-      # Step 7: Deploy to DigitalOcean Droplet
+      # Step 7: Add SSH key to known hosts to avoid verification failure
+      - name: Add Droplet to known hosts
+        run: ssh-keyscan -H 167.71.128.214 >> ~/.ssh/known_hosts
+
+      # Step 8: Deploy to DigitalOcean Droplet
       - name: Deploy to DigitalOcean
         run: |
           ssh root@167.71.128.214 "cd /var/www/your-app && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force"
