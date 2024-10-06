@@ -37,7 +37,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DO_SSH_KEY }}
 
-      # Step 7: Deploy to DigitalOcean Droplet
+      # Step 7: Deploy to DigitalOcean Droplet.
       - name: Deploy to DigitalOcean
         run: |
           ssh root@your-droplet-ip "cd /var/www/your-app && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force"
