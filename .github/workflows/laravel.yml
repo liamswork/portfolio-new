@@ -40,4 +40,4 @@ jobs:
       # Step 7: Deploy to DigitalOcean Droplet
       - name: Deploy to DigitalOcean
         run: |
-          ssh root@your-droplet-ip "cd /var/www/your-app && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force"
+          ssh root@167.71.128.214 "cd /var/www/your-app && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force"
