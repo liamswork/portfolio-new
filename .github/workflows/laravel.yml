@@ -31,9 +31,11 @@ jobs:
       - name: Set Directory Permissions
         run: chmod -R 775 storage bootstrap/cache
 
-      # Step 6: Add Droplet to known hosts
-      - name: Add Droplet to known hosts
-        run: ssh-keyscan -H 167.71.128.214 >> ~/.ssh/known_hosts
+      # Step 6: Create SSH directory and add Droplet to known hosts
+      - name: Set up SSH for deployment
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 167.71.128.214 >> ~/.ssh/known_hosts
 
       # Step 7: Set up SSH for deployment to DigitalOcean Droplet
       - name: Set up SSH for deployment
