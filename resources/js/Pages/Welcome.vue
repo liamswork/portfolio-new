@@ -12,8 +12,10 @@ defineProps({
 <template>
     <AppLayout title="Gangster">
     <Head title="Welcome" />
-    <div>
-        <H1>This is a test page.</H1>
+    <div class="flex flex-col justify-center items-center">
+        <h1>This is a test page.</h1>
+        <h2>If you're seeing this, the site is under construction.</h2>
+        <h3>Frankly, it's very early in the production stage.</h3>
     </div>
     </AppLayout>
 </template>

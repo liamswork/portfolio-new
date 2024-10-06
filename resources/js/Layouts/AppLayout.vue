@@ -17,7 +17,7 @@ defineProps({
         <Header></Header>
         <div class="relative flex justify-center items-center min-h-[80vh] w-full">
             <main class="mt-6">
-                <div class="container bg-gray-800">
+                <div class="container bg-gray-600">
                     <slot></slot>
                 </div>
             </main>
