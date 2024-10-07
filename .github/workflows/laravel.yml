@@ -7,6 +7,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       # Step 1: Checkout the code
       - name: Checkout code
@@ -17,31 +18,42 @@ jobs:
         with:
           php-version: '8.3'
 
-      # Step 3: Install NPM dependencies and build assets
-      - name: Install NPM Dependencies
-        run: npm install
-      - name: Build Assets
-        run: npm run build
+      # Step 3: Install Composer dependencies (if necessary for local build)
+      - name: Install Composer Dependencies
+        run: composer install --no-dev --optimize-autoloader
 
-      # Step 4: Set Directory Permissions
-      - name: Set Directory Permissions
-        run: chmod -R 775 storage bootstrap/cache
-
-      # Step 5: Deploy to DigitalOcean
+      # Step 4: Deploy to DigitalOcean
       - name: Deploy to Server
         env:
           SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_KEY }}  # The private key for SSH connection
-          SERVER_USER: ${{ secrets.DEPLOY_USER }}          # The username for the server
-          SERVER_IP: ${{ secrets.DEPLOY_SERVER }}              # The IP address of the server
+          SERVER_USER: ${{ secrets.DEPLOY_USER }}      # The username for the server
+          SERVER_IP: ${{ secrets.DEPLOY_SERVER }}       # The IP address of the server
         run: |
+          # Create a private key file
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
+
+          # SSH into the server and deploy
           ssh -o StrictHostKeyChecking=no -i private_key.pem $SERVER_USER@$SERVER_IP << 'EOF'
+            set -e  # Exit immediately if a command exits with a non-zero status
+
             cd /var/www/portfolio  # Navigate to your project directory
             git pull origin master   # Pull the latest code from GitHub
+
+            # Install NPM dependencies and build assets
+            npm install
+            npm run build
+
             composer install --no-dev --optimize-autoloader  # Install production dependencies
+
             php artisan migrate --force  # Run migrations if necessary
             php artisan config:cache  # Cache configuration
             php artisan route:cache   # Cache routes
             php artisan view:cache     # Cache views
+
+            # Optional: Set directory permissions
+            chmod -R 775 storage bootstrap/cache
           EOF
+
+          # Clean up
+          rm private_key.pem
