@@ -10,7 +10,7 @@ defineProps({
             <h2 class="text-white uppercase">Liam Wylie</h2>
         </div>
         <div class="col-span-6 flex flex-row lg:items-center lg:justify-evenly">
-            <a>Test LINK!</a>
+            <a>Test LINK!!!!</a>
             <a>Test Link</a>
             <a>Test Link</a>
             <a>Test Link</a>
