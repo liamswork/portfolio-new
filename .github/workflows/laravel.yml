@@ -40,8 +40,8 @@ jobs:
         with:
           host: ${{ secrets.DEPLOY_SERVER }}
           username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DO_SSH_KEY }}
           password: ${{ secrets.PASSWORD }}
+          key: ${{ secrets.DEPLOY_KEY }}
           script: |
             cd /var/www/portfolio
             git pull origin master
