@@ -29,15 +29,21 @@ jobs:
 
       # Step 5: Directory Permissions
       - name: Set Directory Permissions
-        run: chmod -R 777 storage bootstrap/cache
+        run: chmod -R 775 storage bootstrap/cache
 
-      # Step 6: Set up SSH for deployment to DigitalOcean Droplet
+      # Step 6: Create SSH directory and add Droplet to known hosts
+      - name: Set up SSH for deployment
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 167.71.128.214 >> ~/.ssh/known_hosts
+
+      # Step 7: Set up SSH for deployment to DigitalOcean Droplet
       - name: Set up SSH for deployment
         uses: webfactory/ssh-agent@v0.5.3
         with:
           ssh-private-key: ${{ secrets.DO_SSH_KEY }}
 
-      # Step 7: Deploy to DigitalOcean Droplet
+      # Step 8: Deploy to DigitalOcean
       - name: Deploy to DigitalOcean
         run: |
-          ssh root@your-droplet-ip "cd /var/www/your-app && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force"
+          ssh -o StrictHostKeyChecking=no root@167.71.128.214 "cd /var/www/portfolio && git pull origin master && composer install --no-interaction --prefer-dist --optimize-autoloader && npm install && npm run build && php artisan migrate --force || exit 1"
