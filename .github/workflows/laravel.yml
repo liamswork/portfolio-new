@@ -30,9 +30,9 @@ jobs:
       # Step 5: Deploy to DigitalOcean
       - name: Deploy to Server
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}  # The private key for SSH connection
-          SERVER_USER: ${{ secrets.SERVER_USER }}          # The username for the server
-          SERVER_IP: ${{ secrets.SERVER_IP }}              # The IP address of the server
+          SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_KEY }}  # The private key for SSH connection
+          SERVER_USER: ${{ secrets.DEPLOY_USER }}          # The username for the server
+          SERVER_IP: ${{ secrets.DEPLOY_SERVER }}              # The IP address of the server
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
