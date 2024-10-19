@@ -52,3 +52,6 @@ jobs:
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
+            sudo chown -R www-data:www-data /var/www/portfolio/storage /var/www/portfolio/bootstrap/cache
+            sudo chmod -R 775 /var/www/portfolio/storage /var/www/portfolio/bootstrap/cache
+
