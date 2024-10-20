@@ -45,6 +45,7 @@ jobs:
           script: |
             cd /var/www/portfolio
             git pull origin master
+            export COMPOSER_ALLOW_SUPERUSER=1
             composer install --no-interaction --prefer-dist --optimize-autoloader
             npm install
             npm run build
@@ -54,4 +55,4 @@ jobs:
             php artisan view:cache
             sudo chown -R www-data:www-data /var/www/portfolio/storage /var/www/portfolio/bootstrap/cache
             sudo chmod -R 775 /var/www/portfolio/storage /var/www/portfolio/bootstrap/cache
-
+        timeout-minutes: 5
