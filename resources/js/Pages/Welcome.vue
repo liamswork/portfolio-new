@@ -16,6 +16,7 @@ defineProps({
         <h1>This is a test page.</h1>
         <h2>If you're seeing this, the site is under construction.</h2>
         <h3>Frankly, it's very early in the production stage.</h3>
+	<h4>This line was written from a second laptop. Proof of concept for GitHub SSH
     </div>
     </AppLayout>
 </template>
