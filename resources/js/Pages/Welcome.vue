@@ -13,7 +13,7 @@ defineProps({
     <AppLayout title="Gangster">
     <Head title="Welcome" />
     <div class="flex flex-col justify-center items-center">
-        <h1>This is a test page.</h1>
+        <h1>This is a test page!</h1>
         <h2>If you're seeing this, the site is under construction.</h2>
         <h3>Frankly, it's very early in the production stage.</h3>
 	<h4>This line was written from a second laptop. Proof of concept for GitHub SSH</h4>
