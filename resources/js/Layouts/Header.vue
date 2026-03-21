@@ -17,6 +17,7 @@ defineProps({
                 <ul class="flex flex-row lg:flex-row items-center gap-8 text-center">
                     <li><a href="#" class="transform inline-block h-8 transition duration-500 hover:scale-125">CVV</a></li>
                     <li><a href="#" class="transform inline-block h-8 transition duration-500 hover:scale-125">About Me</a></li>
+                    <li><a href="/games" class="transform inline-block h-8 transition duration-500 hover:scale-125">Games</a></li>
                     <li>
                         <a href="https://github.com/liamswork" target="_blank">
                             <i class="fa-brands fa-github text-2xl transform h-8 transition duration-500 hover:scale-125"></i>

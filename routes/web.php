@@ -10,6 +10,10 @@ Route::get('/', function () {
     ]);
 });
 
+Route::get('/games', function () {
+    return Inertia::render('Games');
+})->name('games');
+
 //Route::middleware([
 //    'auth:sanctum',
 //    config('jetstream.auth_session'),
