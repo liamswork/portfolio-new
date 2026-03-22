@@ -15,9 +15,9 @@ defineProps({
     <div class="bg-black text-white/50">
         <Head :title="title" />
         <Header></Header>
-        <div class="min-h-[80vh] w-full">
-            <main class="w-full mt-6">
-                <slot></slot>
+        <div class="relative flex justify-center items-start min-h-[80vh] w-full">
+            <main class="mt-6 w-full">
+                    <slot></slot>
             </main>
         </div>
         <Footer />
