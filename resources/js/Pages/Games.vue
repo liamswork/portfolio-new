@@ -10,7 +10,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
             <h1 class="text-3xl font-bold uppercase mb-8">Games</h1>
             <div class="grid grid-cols-3 gap-6">
                 <div class="flex flex-col overflow-hidden">
-                    <div class="bg-accent flex-1 rounded-lg min-h-48"></div>
+                    <div class="flex-1 rounded-lg min-h-48 bg-cover bg-center" style="background-image: url('/images/TowerDefence.png')"></div>
                     <div class="py-2 text-center"><a href="/games/tower">Tower Game</a></div>
                 </div>
                 <div class="flex flex-col overflow-hidden">

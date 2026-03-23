@@ -30,15 +30,28 @@ const log         = ref([]);
 const sending     = ref(false);
 const animations  = ref([]);
 const dragAmount  = ref(null);
+const hasAttacked = ref(false);  // tracks if attack phase was reached this turn
+const hasFortified = ref(false); // tracks if fortify was used this turn
 
-// ── Attack drag state ─────────────────────────────────────────────────────────
-const attackFrom      = ref(null);  // polygon id being dragged from
-const attackTo        = ref(null);  // polygon id dropped onto
+// ── Attack drag cursor label ──────────────────────────────────────────────────
+const dragCursor = ref({ x: 0, y: 0, visible: false });
+
+function onCanvasMouseMove(e) {
+    if (canvasDragFromId) {
+        dragCursor.value = { x: e.clientX, y: e.clientY, visible: true };
+    }
+}const attackFrom      = ref(null);
+const attackTo        = ref(null);
 const showAttackModal = ref(false);
-const diceResult      = ref(null);  // { attackRolls, defendRolls, attackLoss, defendLoss, success }
+const diceResult      = ref(null);
 const showDiceModal   = ref(false);
 const diceAnimating   = ref(false);
-const diceDisplay     = ref([]);    // current face values shown during animation
+const diceDisplay     = ref([]);
+
+// ── Fortify drag state ────────────────────────────────────────────────────────
+const fortifyFrom      = ref(null);
+const fortifyTo        = ref(null);
+const showFortifyModal = ref(false);
 
 const PLACE_OPTIONS = [1, 3, 5, 10, 25];
 
@@ -81,8 +94,9 @@ const attackTargets = computed(() => {
 });
 
 const fortifyTargets = computed(() => {
-    if (!selected.value || phase.value !== PHASE_FORTIFY) return [];
-    const poly = props.map.polygons.find(p => p.id === selected.value);
+    const src = fortifyFrom.value ?? selected.value;
+    if (!src || phase.value !== PHASE_FORTIFY) return [];
+    const poly = props.map.polygons.find(p => p.id === src);
     if (!poly) return [];
     return poly.connections.filter(cid => {
         const s = gameState.value?.polygons?.find(p => p.id === cid);
@@ -186,8 +200,10 @@ function applyUpdate(data) {
         && data.game.current_turn === props.myPlayer.turn_order;
 
     if (justBecameMyTurn) {
-        phase.value    = PHASE_PLACE;
-        selected.value = null;
+        phase.value      = PHASE_PLACE;
+        selected.value   = null;
+        hasAttacked.value  = false;
+        hasFortified.value = false;
         addLog('Your turn! Place your reinforcements.');
     }
 }
@@ -200,6 +216,9 @@ function addLog(msg) {
 // ── Canvas interaction ────────────────────────────────────────────────────────
 function onCanvasClick(e) {
     if (!isMyTurn.value) return;
+    // Don't interfere while attack modal is open or a drag just completed
+    if (showAttackModal.value || showDiceModal.value) return;
+    if (suppressNextClick) { suppressNextClick = false; return; }
     const rect = canvas.value.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (680 / rect.width);
     const y = (e.clientY - rect.top)  * (520 / rect.height);
@@ -258,8 +277,14 @@ async function sendAction(payload) {
 function doPlace(amount) {
     const amt = amount ?? placeAmount.value;
     if (!selected.value || myReinforcements.value < amt) return;
-    sendAction({ type: 'place', polygon_id: selected.value, armies: amt });
-    addLog(`Placed ${amt} on ${selectedPolygon.value?.name}`);
+    sendAction({ type: 'place', polygon_id: selected.value, armies: amt }).then(() => {
+        addLog(`Placed ${amt} on ${selectedPolygon.value?.name}`);
+        if (myReinforcements.value === 0) {
+            phase.value    = PHASE_ATTACK;
+            hasAttacked.value = true;
+            selected.value = null;
+        }
+    });
 }
 
 function doAttack(from, to, armies) {
@@ -272,23 +297,33 @@ function doAttack(from, to, armies) {
 
 // ── Attack drag (canvas → canvas) ─────────────────────────────────────────────
 let canvasDragFromId = null;
+let suppressNextClick = false;
 
 function onCanvasMouseDown(e) {
-    if (!isMyTurn.value || phase.value !== PHASE_ATTACK) return;
+    if (!isMyTurn.value) return;
     const rect = canvas.value.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (680 / rect.width);
     const y = (e.clientY - rect.top)  * (520 / rect.height);
     const pid = hitTest(x, y, props.map.polygons);
     if (!pid) return;
     const pState = gameState.value?.polygons?.find(p => p.id === pid);
-    if (pState?.owner === props.auth.user.id && pState?.armies > 1) {
-        canvasDragFromId = pid;
-        attackFrom.value = pid;
+
+    if (phase.value === PHASE_ATTACK) {
+        if (pState?.owner === props.auth.user.id && pState?.armies > 1) {
+            canvasDragFromId = pid;
+            attackFrom.value = pid;
+        }
+    } else if (phase.value === PHASE_FORTIFY) {
+        if (pState?.owner === props.auth.user.id && pState?.armies > 1) {
+            canvasDragFromId = pid;
+            fortifyFrom.value = pid;
+        }
     }
 }
 
 function onCanvasMouseUp(e) {
-    if (!canvasDragFromId || !isMyTurn.value || phase.value !== PHASE_ATTACK) {
+    dragCursor.value.visible = false;
+    if (!canvasDragFromId || !isMyTurn.value) {
         canvasDragFromId = null;
         return;
     }
@@ -296,11 +331,24 @@ function onCanvasMouseUp(e) {
     const x = (e.clientX - rect.left) * (680 / rect.width);
     const y = (e.clientY - rect.top)  * (520 / rect.height);
     const pid = hitTest(x, y, props.map.polygons);
-    if (pid && pid !== canvasDragFromId && attackTargets.value.includes(pid)) {
-        attackTo.value        = pid;
-        showAttackModal.value = true;
-    } else {
-        attackFrom.value = null;
+
+    if (phase.value === PHASE_ATTACK) {
+        if (pid && pid !== canvasDragFromId && attackTargets.value.includes(pid)) {
+            attackTo.value        = pid;
+            showAttackModal.value = true;
+            suppressNextClick     = true;
+        } else {
+            attackFrom.value = null;
+        }
+    } else if (phase.value === PHASE_FORTIFY) {
+        if (pid && pid !== canvasDragFromId && fortifyTargets.value.includes(pid)) {
+            fortifyTo.value        = pid;
+            fortifyAmt.value       = 1;
+            showFortifyModal.value = true;
+            suppressNextClick      = true;
+        } else {
+            fortifyFrom.value = null;
+        }
     }
     canvasDragFromId = null;
 }
@@ -342,11 +390,28 @@ function closeDiceModal() {
 }
 
 function doFortify(from, to) {
-    sendAction({ type: 'fortify', from, to, armies: fortifyAmt.value });
-    addLog(`Fortifying ${props.map.polygons.find(p => p.id === to)?.name}`);
-    selected.value = null;
+    sendAction({ type: 'fortify', from, to, armies: fortifyAmt.value }).then(() => {
+        addLog(`Fortified ${props.map.polygons.find(p => p.id === to)?.name}`);
+        hasFortified.value = true;
+        selected.value     = null;
+        endTurn();
+    });
 }
 
+function confirmFortify() {
+    const from = fortifyFrom.value;
+    const to   = fortifyTo.value;
+    showFortifyModal.value = false;
+    doFortify(from, to);
+    fortifyFrom.value = null;
+    fortifyTo.value   = null;
+}
+
+function cancelFortify() {
+    showFortifyModal.value = false;
+    fortifyFrom.value      = null;
+    fortifyTo.value        = null;
+}
 function endTurn() {
     sendAction({ type: 'endturn' });
     phase.value    = PHASE_PLACE;
@@ -362,6 +427,14 @@ function onDragStart(e, amount) {
     dragAmount.value = amount;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', amount);
+
+    // Create a visible drag ghost showing the number
+    const ghost = document.createElement('div');
+    ghost.textContent = amount;
+    ghost.style.cssText = 'position:fixed;top:-100px;left:-100px;background:#fbbf24;color:#111;font-weight:700;font-size:1rem;padding:6px 12px;border-radius:6px;pointer-events:none;';
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, ghost.offsetHeight / 2);
+    setTimeout(() => document.body.removeChild(ghost), 0);
 }
 
 function onCanvasDrop(e) {
@@ -395,11 +468,11 @@ function onCanvasDragOver(e) {
                 <div class="flex items-center gap-3">
                     <a
                         :href="route('kirkconnel.lobby')"
-                        class="text-white/70 hover:text-white transition text-sm flex items-center gap-1"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary/10 border border-secondary/20 text-secondary text-sm font-medium hover:bg-accent hover:border-accent hover:text-secondary transition-colors duration-200"
                     >← Lobby</a>
                     <div>
-                        <h1 class="text-2xl font-bold uppercase" style="color:#111827;">Kirkconnel</h1>
-                        <p style="color:rgba(0,0,0,0.5); font-size:0.875rem">{{ map.name }} &nbsp;·&nbsp; Round {{ round }}</p>
+                        <h1 class="text-2xl font-bold uppercase text-secondary">Kirkconnel</h1>
+                        <p class="text-secondary/50 text-sm">{{ map.name }} &nbsp;·&nbsp; Round {{ round }}</p>
                     </div>
                 </div>
                 <div class="flex gap-2">
@@ -448,6 +521,7 @@ function onCanvasDragOver(e) {
                         @click="onCanvasClick"
                         @mousedown="onCanvasMouseDown"
                         @mouseup="onCanvasMouseUp"
+                        @mousemove="onCanvasMouseMove"
                         @drop="onCanvasDrop"
                         @dragover="onCanvasDragOver"
                     />
@@ -529,6 +603,39 @@ function onCanvasDragOver(e) {
                             {{ attackFrom ? `Attacking from ${props.map.polygons.find(p=>p.id===attackFrom)?.name} — drag to an enemy territory` : 'Click your territory, then drag to an enemy to attack' }}
                         </span>
                     </div>
+
+                    <!-- Fortify: army count modal -->
+                    <div
+                        v-if="showFortifyModal"
+                        class="rounded-b-lg px-5 py-3 flex items-center gap-4"
+                        style="background:#111827; border-top:1px solid rgba(255,255,255,0.08)"
+                    >
+                        <span style="font-size:0.75rem; color:rgba(255,255,255,0.5); white-space:nowrap">
+                            {{ props.map.polygons.find(p => p.id === fortifyFrom)?.name }}
+                            <span style="color:#22c55e">→</span>
+                            {{ props.map.polygons.find(p => p.id === fortifyTo)?.name }}
+                        </span>
+                        <span style="font-size:0.7rem; color:rgba(255,255,255,0.35)">Armies:</span>
+                        <div class="flex gap-2 items-center">
+                            <button @click="fortifyAmt = Math.max(1, fortifyAmt - 1)" class="w-7 h-7 rounded font-bold text-sm hover:opacity-80" style="background:rgba(255,255,255,0.1); color:#fff">-</button>
+                            <span class="font-bold text-sm w-6 text-center" style="color:#22c55e">{{ fortifyAmt }}</span>
+                            <button @click="fortifyAmt = Math.min(fortifyAmt + 1, (gameState?.polygons?.find(p=>p.id===fortifyFrom)?.armies??2)-1)" class="w-7 h-7 rounded font-bold text-sm hover:opacity-80" style="background:rgba(255,255,255,0.1); color:#fff">+</button>
+                            <button @click="fortifyAmt = (gameState?.polygons?.find(p=>p.id===fortifyFrom)?.armies??2)-1" class="px-2 py-1 rounded font-bold text-xs hover:opacity-80" style="background:rgba(255,255,255,0.1); color:#fff">All</button>
+                        </div>
+                        <button @click="confirmFortify" class="px-3 py-1 rounded font-bold text-sm hover:opacity-80" style="background:#22c55e; color:#111">Move</button>
+                        <button @click="cancelFortify" class="ml-auto text-xs hover:opacity-70" style="color:rgba(255,255,255,0.35)">Cancel</button>
+                    </div>
+
+                    <!-- Fortify: hint -->
+                    <div
+                        v-else-if="phase === PHASE_FORTIFY && isMyTurn && !showFortifyModal"
+                        class="rounded-b-lg px-5 py-2"
+                        style="background:#111827; border-top:1px solid rgba(255,255,255,0.08)"
+                    >
+                        <span style="font-size:0.72rem; color:rgba(255,255,255,0.3)">
+                            {{ fortifyFrom ? `Moving from ${props.map.polygons.find(p=>p.id===fortifyFrom)?.name} — drag to a friendly territory` : 'Drag from one of your territories to an adjacent friendly one' }}
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Sidebar -->
@@ -542,9 +649,11 @@ function onCanvasDragOver(e) {
                             <button
                                 v-for="(label, p) in { place: 'Place', attack: 'Attack', fortify: 'Fortify' }"
                                 :key="p"
-                                @click="phase = p; selected = null"
-                                class="flex-1 py-1.5 transition"
-                                :style="phase === p ? 'background:#e94f37; color:#fff' : 'background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.6)'"
+                                disabled
+                                class="flex-1 py-1.5"
+                                :style="phase === p
+                                    ? 'background:#e94f37; color:#fff'
+                                    : 'background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.3)'"
                             >{{ label }}</button>
                         </div>
 
@@ -577,7 +686,7 @@ function onCanvasDragOver(e) {
                             >Place {{ placeAmount }} {{ placeAmount === 1 ? 'Army' : 'Armies' }}</button>
                             <button
                                 v-if="myReinforcements === 0"
-                                @click="phase = PHASE_ATTACK; selected = null"
+                                @click="phase = PHASE_ATTACK; hasAttacked = true; selected = null"
                                 class="w-full mt-2 py-1.5 rounded hover:opacity-80"
                                 style="background:rgba(255,255,255,0.1); color:#fff; font-size:0.875rem"
                             >Done Placing →</button>
@@ -591,18 +700,26 @@ function onCanvasDragOver(e) {
                             <p v-if="attackFrom" style="font-size:0.75rem; color:#fbbf24">
                                 Attacking from: {{ props.map.polygons.find(p => p.id === attackFrom)?.name }}
                             </p>
+                            <button
+                                @click="phase = PHASE_FORTIFY; attackFrom = null; selected = null"
+                                class="w-full mt-2 py-1.5 rounded hover:opacity-80"
+                                style="background:rgba(255,255,255,0.1); color:#fff; font-size:0.875rem"
+                            >Finish Attacking →</button>
                         </div>
 
                         <!-- Fortify phase -->
                         <div v-if="phase === PHASE_FORTIFY">
-                            <p style="font-size:0.75rem; color:rgba(255,255,255,0.5)" class="mb-2">Move armies between adjacent polygons you own.</p>
-                            <div v-if="selected">
-                                <input type="range" v-model.number="fortifyAmt" min="1" :max="Math.max(1,(selectedState?.armies??1)-1)" class="w-full mb-1" />
-                                <p style="font-size:0.75rem; color:rgba(255,255,255,0.6); text-align:center">Move {{ fortifyAmt }}</p>
-                            </div>
+                            <p style="font-size:0.75rem; color:rgba(255,255,255,0.5)" class="mb-2">Drag from one of your territories to an adjacent friendly one. One fortify per turn.</p>
+                            <button
+                                @click="endTurn"
+                                :disabled="sending"
+                                class="w-full mt-2 py-1.5 rounded hover:opacity-80 disabled:opacity-40"
+                                style="background:rgba(255,255,255,0.1); color:#fff; font-size:0.875rem"
+                            >Skip &amp; End Turn</button>
                         </div>
 
                         <button
+                            v-if="phase !== PHASE_FORTIFY"
                             @click="endTurn"
                             :disabled="sending"
                             class="w-full mt-3 py-1.5 rounded hover:opacity-80 disabled:opacity-40"
@@ -651,6 +768,23 @@ function onCanvasDragOver(e) {
                 </div>
             </div>
         </div>
+
+        <!-- Drag cursor label (attack + fortify) -->
+        <Teleport to="body">
+            <div
+                v-if="dragCursor.visible && (attackFrom || fortifyFrom)"
+                class="pointer-events-none fixed z-50 px-3 py-1.5 rounded-md font-bold text-sm"
+                :style="{
+                    background: fortifyFrom ? '#22c55e' : '#e94f37',
+                    color: fortifyFrom ? '#111' : '#fff',
+                    left: dragCursor.x + 'px',
+                    top: dragCursor.y + 'px',
+                    transform: 'translate(-50%, -130%)',
+                }"
+            >
+                {{ fortifyFrom ? '🛡 ' : '⚔ ' }}{{ props.map.polygons.find(p => p.id === (fortifyFrom ?? attackFrom))?.name }}
+            </div>
+        </Teleport>
 
     </AppLayout>
 </template>
