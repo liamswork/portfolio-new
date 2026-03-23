@@ -25,12 +25,20 @@ const winnerId    = ref(props.game.winner_id);
 const phase       = ref(PHASE_PLACE);
 const selected    = ref(null);
 const placeAmount = ref(1);
-const attackArmy  = ref(1);
 const fortifyAmt  = ref(1);
 const log         = ref([]);
 const sending     = ref(false);
 const animations  = ref([]);
 const dragAmount  = ref(null);
+
+// ── Attack drag state ─────────────────────────────────────────────────────────
+const attackFrom      = ref(null);  // polygon id being dragged from
+const attackTo        = ref(null);  // polygon id dropped onto
+const showAttackModal = ref(false);
+const diceResult      = ref(null);  // { attackRolls, defendRolls, attackLoss, defendLoss, success }
+const showDiceModal   = ref(false);
+const diceAnimating   = ref(false);
+const diceDisplay     = ref([]);    // current face values shown during animation
 
 const PLACE_OPTIONS = [1, 3, 5, 10, 25];
 
@@ -62,8 +70,9 @@ const myPolygons = computed(() => {
 });
 
 const attackTargets = computed(() => {
-    if (!selected.value || phase.value !== PHASE_ATTACK) return [];
-    const poly = props.map.polygons.find(p => p.id === selected.value);
+    const src = phase.value === PHASE_ATTACK ? (attackFrom.value ?? selected.value) : null;
+    if (!src) return [];
+    const poly = props.map.polygons.find(p => p.id === src);
     if (!poly) return [];
     return poly.connections.filter(cid => {
         const s = gameState.value?.polygons?.find(p => p.id === cid);
@@ -88,8 +97,25 @@ const highlightIds = computed(() => {
     return [];
 });
 
+const attackHighlightSource = computed(() => attackFrom.value ? [attackFrom.value] : []);
+
 // ── Canvas render loop ────────────────────────────────────────────────────────
 let raf = null;
+
+function setupCanvas() {
+    const el  = canvas.value;
+    if (!el) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w   = el.parentElement.clientWidth || 680;
+    const h   = Math.round(w * (520 / 680));
+    el.width  = w * dpr;
+    el.height = h * dpr;
+    el.style.width  = w + 'px';
+    el.style.height = h + 'px';
+    const ctx = el.getContext('2d');
+    // Scale for DPR + scale map coords (authored at 680×520) to actual canvas size
+    ctx.scale(dpr * (w / 680), dpr * (h / 520));
+}
 
 function draw() {
     const ctx = canvas.value?.getContext('2d');
@@ -110,6 +136,7 @@ function draw() {
 }
 
 onMounted(() => {
+    setupCanvas();
     raf = requestAnimationFrame(draw);
     setupEcho();
     if (props.myPlayer?.session_token) {
@@ -173,11 +200,9 @@ function addLog(msg) {
 // ── Canvas interaction ────────────────────────────────────────────────────────
 function onCanvasClick(e) {
     if (!isMyTurn.value) return;
-    const rect   = canvas.value.getBoundingClientRect();
-    const scaleX = canvas.value.width  / rect.width;
-    const scaleY = canvas.value.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top)  * scaleY;
+    const rect = canvas.value.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (680 / rect.width);
+    const y = (e.clientY - rect.top)  * (520 / rect.height);
 
     const pid = hitTest(x, y, props.map.polygons);
     if (!pid) { selected.value = null; return; }
@@ -193,14 +218,13 @@ function onCanvasClick(e) {
     }
 
     if (phase.value === PHASE_ATTACK) {
-        if (!selected.value) {
-            if (pState?.owner === props.auth.user.id && pState?.armies > 1) selected.value = pid;
-        } else if (attackTargets.value.includes(pid)) {
-            doAttack(selected.value, pid);
+        // Attack is handled via drag (mousedown/mouseup), click just selects source
+        if (!attackFrom.value) {
+            if (pState?.owner === props.auth.user.id && pState?.armies > 1) attackFrom.value = pid;
         } else if (pState?.owner === props.auth.user.id) {
-            selected.value = pid;
+            attackFrom.value = pid;
         } else {
-            addLog(`${props.map.polygons.find(p => p.id === pid)?.name} is not adjacent.`);
+            attackFrom.value = null;
         }
         return;
     }
@@ -222,8 +246,10 @@ async function sendAction(payload) {
     try {
         const res = await window.axios.post(route('kirkconnel.action', props.game.id), payload);
         if (res.data.game) applyUpdate(res.data);
+        return res.data;
     } catch (err) {
         addLog('Error: ' + (err.response?.data?.message ?? 'Unknown error'));
+        return null;
     } finally {
         sending.value = false;
     }
@@ -236,12 +262,83 @@ function doPlace(amount) {
     addLog(`Placed ${amt} on ${selectedPolygon.value?.name}`);
 }
 
-function doAttack(from, to) {
-    const fromState = gameState.value?.polygons?.find(p => p.id === from);
-    const armies    = Math.min(attackArmy.value, (fromState?.armies ?? 1) - 1);
-    sendAction({ type: 'attack', from, to, armies });
-    addLog(`Attacking ${props.map.polygons.find(p => p.id === to)?.name}...`);
+function doAttack(from, to, armies) {
+    addLog(`Attacking ${props.map.polygons.find(p => p.id === to)?.name} with ${armies} dice...`);
+    sendAction({ type: 'attack', from, to, armies }).then(result => {
+        if (result?.last_action) showDiceRoll(result.last_action);
+    });
     selected.value = null;
+}
+
+// ── Attack drag (canvas → canvas) ─────────────────────────────────────────────
+let canvasDragFromId = null;
+
+function onCanvasMouseDown(e) {
+    if (!isMyTurn.value || phase.value !== PHASE_ATTACK) return;
+    const rect = canvas.value.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (680 / rect.width);
+    const y = (e.clientY - rect.top)  * (520 / rect.height);
+    const pid = hitTest(x, y, props.map.polygons);
+    if (!pid) return;
+    const pState = gameState.value?.polygons?.find(p => p.id === pid);
+    if (pState?.owner === props.auth.user.id && pState?.armies > 1) {
+        canvasDragFromId = pid;
+        attackFrom.value = pid;
+    }
+}
+
+function onCanvasMouseUp(e) {
+    if (!canvasDragFromId || !isMyTurn.value || phase.value !== PHASE_ATTACK) {
+        canvasDragFromId = null;
+        return;
+    }
+    const rect = canvas.value.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (680 / rect.width);
+    const y = (e.clientY - rect.top)  * (520 / rect.height);
+    const pid = hitTest(x, y, props.map.polygons);
+    if (pid && pid !== canvasDragFromId && attackTargets.value.includes(pid)) {
+        attackTo.value        = pid;
+        showAttackModal.value = true;
+    } else {
+        attackFrom.value = null;
+    }
+    canvasDragFromId = null;
+}
+
+function confirmAttack(dice) {
+    const from      = attackFrom.value;
+    const to        = attackTo.value;
+    const fromState = gameState.value?.polygons?.find(p => p.id === from);
+    const maxDice   = Math.min((fromState?.armies ?? 1) - 1, 3);
+    const armies    = dice === 'all' ? maxDice : Math.min(dice, maxDice);
+    showAttackModal.value = false;
+    doAttack(from, to, armies);
+    attackFrom.value = null;
+    attackTo.value   = null;
+}
+
+function cancelAttack() {
+    showAttackModal.value = false;
+    attackFrom.value      = null;
+    attackTo.value        = null;
+}
+
+function showDiceRoll(action) {
+    diceResult.value    = action;
+    diceAnimating.value = true;
+    showDiceModal.value = true;
+    let ticks = 0;
+    const interval = setInterval(() => {
+        const n = Math.max(action.attackRolls.length, action.defendRolls.length);
+        diceDisplay.value = Array.from({ length: n }, () => Math.ceil(Math.random() * 6));
+        if (++ticks >= 18) clearInterval(interval);
+        if (ticks >= 18) diceAnimating.value = false;
+    }, 70);
+}
+
+function closeDiceModal() {
+    showDiceModal.value = false;
+    diceResult.value    = null;
 }
 
 function doFortify(from, to) {
@@ -270,11 +367,9 @@ function onDragStart(e, amount) {
 function onCanvasDrop(e) {
     if (!isMyTurn.value || phase.value !== PHASE_PLACE || dragAmount.value === null) return;
     e.preventDefault();
-    const rect   = canvas.value.getBoundingClientRect();
-    const scaleX = canvas.value.width  / rect.width;
-    const scaleY = canvas.value.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top)  * scaleY;
+    const rect = canvas.value.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (680 / rect.width);
+    const y = (e.clientY - rect.top)  * (520 / rect.height);
     const pid = hitTest(x, y, props.map.polygons);
     if (!pid) { dragAmount.value = null; return; }
     const pState = gameState.value?.polygons?.find(p => p.id === pid);
@@ -297,9 +392,15 @@ function onCanvasDragOver(e) {
 
             <!-- Header bar -->
             <div class="flex items-center justify-between mb-4">
-                <div>
-                    <h1 class="text-2xl font-bold uppercase">Kirkconnel</h1>
-                    <p style="color:rgba(255,255,255,0.4); font-size:0.875rem">{{ map.name }} &nbsp;·&nbsp; Round {{ round }}</p>
+                <div class="flex items-center gap-3">
+                    <a
+                        :href="route('kirkconnel.lobby')"
+                        class="text-white/70 hover:text-white transition text-sm flex items-center gap-1"
+                    >← Lobby</a>
+                    <div>
+                        <h1 class="text-2xl font-bold uppercase" style="color:#111827;">Kirkconnel</h1>
+                        <p style="color:rgba(0,0,0,0.5); font-size:0.875rem">{{ map.name }} &nbsp;·&nbsp; Round {{ round }}</p>
+                    </div>
                 </div>
                 <div class="flex gap-2">
                     <div
@@ -338,18 +439,96 @@ function onCanvasDragOver(e) {
             </div>
 
             <div class="flex gap-6 items-start">
-                <!-- Canvas map -->
-                <div class="relative flex-1">
+                <!-- Canvas map + attack panel -->
+                <div class="flex-1 flex flex-col">
                     <canvas
                         ref="canvas"
-                        width="680"
-                        height="520"
-                        class="block rounded-lg cursor-pointer"
-                        style="width:100%; background:#111827;"
+                        class="block rounded-t-lg w-full"
+                        :style="{ background:'#111827', cursor: phase === PHASE_ATTACK ? 'crosshair' : 'pointer' }"
                         @click="onCanvasClick"
+                        @mousedown="onCanvasMouseDown"
+                        @mouseup="onCanvasMouseUp"
                         @drop="onCanvasDrop"
                         @dragover="onCanvasDragOver"
                     />
+
+                    <!-- Attack: dice selection -->
+                    <div
+                        v-if="showAttackModal"
+                        class="rounded-b-lg px-5 py-3 flex items-center gap-4"
+                        style="background:#111827; border-top:1px solid rgba(255,255,255,0.08)"
+                    >
+                        <span style="font-size:0.75rem; color:rgba(255,255,255,0.5); white-space:nowrap">
+                            {{ props.map.polygons.find(p => p.id === attackFrom)?.name }}
+                            <span style="color:#e94f37">→</span>
+                            {{ props.map.polygons.find(p => p.id === attackTo)?.name }}
+                        </span>
+                        <span style="font-size:0.7rem; color:rgba(255,255,255,0.35)">Dice:</span>
+                        <div class="flex gap-2">
+                            <button
+                                v-for="d in [1,2,3,'all']" :key="d"
+                                @click="confirmAttack(d)"
+                                :disabled="d !== 'all' && d > Math.min((gameState?.polygons?.find(p=>p.id===attackFrom)?.armies??1)-1, 3)"
+                                class="px-3 py-1 rounded font-bold text-sm hover:opacity-80 disabled:opacity-30"
+                                style="background:#e94f37; color:#fff"
+                            >{{ d === 'all' ? 'All' : d }}</button>
+                        </div>
+                        <button @click="cancelAttack" class="ml-auto text-xs hover:opacity-70" style="color:rgba(255,255,255,0.35)">Cancel</button>
+                    </div>
+
+                    <!-- Attack: dice result -->
+                    <div
+                        v-else-if="showDiceModal"
+                        class="rounded-b-lg px-5 py-3 flex items-center gap-6"
+                        style="background:#111827; border-top:1px solid rgba(255,255,255,0.08)"
+                    >
+                        <span class="font-bold text-sm" style="color:#f9fafb; white-space:nowrap">
+                            {{ diceAnimating ? 'Rolling...' : (diceResult?.success ? '⚔️ Captured!' : '🛡️ Repelled') }}
+                        </span>
+
+                        <!-- Attacker dice -->
+                        <div class="flex items-center gap-1.5">
+                            <span style="font-size:0.65rem; color:rgba(255,255,255,0.35)">ATK</span>
+                            <div
+                                v-for="(val, i) in (diceAnimating ? diceDisplay.slice(0, diceResult?.attackRolls?.length ?? 1) : diceResult?.attackRolls ?? [])"
+                                :key="'a'+i"
+                                class="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
+                                :style="diceAnimating ? 'background:#374151;color:#f9fafb' : 'background:#e94f37;color:#fff'"
+                            >{{ val }}</div>
+                        </div>
+
+                        <span style="color:rgba(255,255,255,0.2)">vs</span>
+
+                        <!-- Defender dice -->
+                        <div class="flex items-center gap-1.5">
+                            <span style="font-size:0.65rem; color:rgba(255,255,255,0.35)">DEF</span>
+                            <div
+                                v-for="(val, i) in (diceAnimating ? diceDisplay.slice(0, diceResult?.defendRolls?.length ?? 1) : diceResult?.defendRolls ?? [])"
+                                :key="'d'+i"
+                                class="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
+                                :style="diceAnimating ? 'background:#374151;color:#f9fafb' : 'background:#3b82f6;color:#fff'"
+                            >{{ val }}</div>
+                        </div>
+
+                        <span v-if="!diceAnimating && diceResult" style="font-size:0.75rem; color:rgba(255,255,255,0.4)">
+                            ATK -{{ diceResult.attackLoss }} &nbsp;·&nbsp; DEF -{{ diceResult.defendLoss }}
+                        </span>
+
+                        <button v-if="!diceAnimating" @click="closeDiceModal" class="ml-auto px-3 py-1 rounded text-sm font-bold hover:opacity-80" style="background:#e94f37;color:#fff">
+                            OK
+                        </button>
+                    </div>
+
+                    <!-- Attack: hint when in attack phase but no action yet -->
+                    <div
+                        v-else-if="phase === PHASE_ATTACK && isMyTurn"
+                        class="rounded-b-lg px-5 py-2"
+                        style="background:#111827; border-top:1px solid rgba(255,255,255,0.08)"
+                    >
+                        <span style="font-size:0.72rem; color:rgba(255,255,255,0.3)">
+                            {{ attackFrom ? `Attacking from ${props.map.polygons.find(p=>p.id===attackFrom)?.name} — drag to an enemy territory` : 'Click your territory, then drag to an enemy to attack' }}
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Sidebar -->
@@ -406,12 +585,12 @@ function onCanvasDragOver(e) {
 
                         <!-- Attack phase -->
                         <div v-if="phase === PHASE_ATTACK">
-                            <p style="font-size:0.75rem; color:rgba(255,255,255,0.5)" class="mb-2">Select your polygon, then click an adjacent enemy.</p>
-                            <div v-if="selected">
-                                <p style="font-size:0.875rem" class="mb-1">Attacking with:</p>
-                                <input type="range" v-model.number="attackArmy" min="1" :max="Math.max(1,(selectedState?.armies??1)-1)" class="w-full mb-1" />
-                                <p style="font-size:0.75rem; color:rgba(255,255,255,0.6); text-align:center">{{ attackArmy }} dice</p>
-                            </div>
+                            <p style="font-size:0.75rem; color:rgba(255,255,255,0.5)" class="mb-2">
+                                Click your territory, then drag to an adjacent enemy to attack.
+                            </p>
+                            <p v-if="attackFrom" style="font-size:0.75rem; color:#fbbf24">
+                                Attacking from: {{ props.map.polygons.find(p => p.id === attackFrom)?.name }}
+                            </p>
                         </div>
 
                         <!-- Fortify phase -->
@@ -472,5 +651,6 @@ function onCanvasDragOver(e) {
                 </div>
             </div>
         </div>
+
     </AppLayout>
 </template>

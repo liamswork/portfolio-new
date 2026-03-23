@@ -12,7 +12,7 @@ defineProps({
 </script>
 
 <template>
-    <div class="bg-black text-white/50">
+    <div class="bg-primary text-secondary">
         <Head :title="title" />
         <Header></Header>
         <div class="relative flex justify-center items-start min-h-[80vh] w-full">

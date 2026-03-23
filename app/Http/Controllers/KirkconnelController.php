@@ -18,9 +18,14 @@ class KirkconnelController extends Controller
     public function lobby()
     {
         $maps  = KirkconnelMap::where('published', true)->with('creator:id,name')->get();
-        $games = KirkconnelGame::where('status', 'waiting')
-            ->with(['creator:id,name', 'players.user:id,name', 'map:id,name'])
-            ->get();
+        $userId = Auth::id();
+        $games = KirkconnelGame::whereIn('status', ['waiting', 'active'])
+            ->with(['creator:id,name', 'players:id,game_id,user_id,color', 'players.user:id,name', 'map:id,name'])
+            ->get()
+            ->map(function ($game) use ($userId) {
+                $game->is_player = $game->players->contains('user_id', $userId);
+                return $game;
+            });
 
         return Inertia::render('Games/Kirkconnel/Lobby', [
             'maps'  => $maps,
@@ -339,10 +344,14 @@ class KirkconnelController extends Controller
         }
 
         return [
-            'type'    => 'attack',
-            'from'    => (int) $request->from,
-            'to'      => (int) $request->to,
-            'success' => $to['owner'] === $player->user_id,
+            'type'         => 'attack',
+            'from'         => (int) $request->from,
+            'to'           => (int) $request->to,
+            'success'      => $to['owner'] === $player->user_id,
+            'attackRolls'  => $attackRolls,
+            'defendRolls'  => $defendRolls,
+            'attackLoss'   => $attackLoss,
+            'defendLoss'   => $defendLoss,
         ];
     }
 
