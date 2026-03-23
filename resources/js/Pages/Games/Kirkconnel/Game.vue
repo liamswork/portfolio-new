@@ -131,33 +131,18 @@ function setupEcho() {
         .listen('.game.updated', applyUpdate);
 }
 
-function spawnAttackAnimation(fromId, toId) {
-    const from = props.map.polygons.find(p => p.id === fromId);
-    const to   = props.map.polygons.find(p => p.id === toId);
-    if (!from || !to) return;
-    animations.value.push({
-        fromX: from.centroid.x, fromY: from.centroid.y,
-        toX:   to.centroid.x,   toY:   to.centroid.y,
-        progress: 0, success: true,
-    });
-}
-
 function applyUpdate(data) {
-    if (data.game.state && gameState.value) {
-        const prev = gameState.value.polygons;
-        const next = data.game.state.polygons;
-        if (prev && next) {
-            for (const np of next) {
-                const pp = prev.find(p => p.id === np.id);
-                if (pp && pp.owner !== np.owner && np.owner !== null) {
-                    const mapPoly = props.map.polygons.find(p => p.id === np.id);
-                    const attacker = mapPoly?.connections.find(cid => {
-                        const s = next.find(p => p.id === cid);
-                        return s?.owner === np.owner;
-                    });
-                    spawnAttackAnimation(attacker ?? np.id, np.id);
-                }
-            }
+    // Spawn attack animation for the opposing player using server-provided action data
+    if (data.last_action?.type === 'attack') {
+        const { from, to, success } = data.last_action;
+        const fromPoly = props.map.polygons.find(p => p.id === from);
+        const toPoly   = props.map.polygons.find(p => p.id === to);
+        if (fromPoly && toPoly) {
+            animations.value.push({
+                fromX: fromPoly.centroid.x, fromY: fromPoly.centroid.y,
+                toX:   toPoly.centroid.x,   toY:   toPoly.centroid.y,
+                progress: 0, success,
+            });
         }
     }
 
@@ -254,7 +239,6 @@ function doPlace(amount) {
 function doAttack(from, to) {
     const fromState = gameState.value?.polygons?.find(p => p.id === from);
     const armies    = Math.min(attackArmy.value, (fromState?.armies ?? 1) - 1);
-    spawnAttackAnimation(from, to);
     sendAction({ type: 'attack', from, to, armies });
     addLog(`Attacking ${props.map.polygons.find(p => p.id === to)?.name}...`);
     selected.value = null;

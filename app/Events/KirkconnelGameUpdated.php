@@ -14,7 +14,7 @@ class KirkconnelGameUpdated implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct(public KirkconnelGame $game) {}
+    public function __construct(public KirkconnelGame $game, public ?array $lastAction = null) {}
 
     public function broadcastOn(): array
     {
@@ -30,8 +30,9 @@ class KirkconnelGameUpdated implements ShouldBroadcast
     {
         $this->game->load('players.user');
         return [
-            'game'    => $this->game->only(['id','status','current_turn','round','state','winner_id']),
-            'players' => $this->game->players->map(fn($p) => [
+            'game'        => $this->game->only(['id','status','current_turn','round','state','winner_id']),
+            'last_action' => $this->lastAction,
+            'players'     => $this->game->players->map(fn($p) => [
                 'id'             => $p->id,
                 'user_id'        => $p->user_id,
                 'name'           => $p->user->name,
