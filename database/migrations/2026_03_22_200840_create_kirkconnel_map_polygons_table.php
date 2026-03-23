@@ -23,7 +23,7 @@ return new class extends Migration {
             $table->unsignedBigInteger('polygon_b_id');
             $table->foreign('polygon_a_id')->references('id')->on('kirkconnel_map_polygons')->cascadeOnDelete();
             $table->foreign('polygon_b_id')->references('id')->on('kirkconnel_map_polygons')->cascadeOnDelete();
-            $table->unique(['polygon_a_id', 'polygon_b_id']);
+            $table->unique(['polygon_a_id', 'polygon_b_id'], 'poly_conn_unique');
         });
     }
 
