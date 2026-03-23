@@ -18,9 +18,14 @@ class KirkconnelController extends Controller
     public function lobby()
     {
         $maps  = KirkconnelMap::where('published', true)->with('creator:id,name')->get();
-        $games = KirkconnelGame::where('status', 'waiting')
-            ->with(['creator:id,name', 'players.user:id,name', 'map:id,name'])
-            ->get();
+        $userId = Auth::id();
+        $games = KirkconnelGame::whereIn('status', ['waiting', 'active'])
+            ->with(['creator:id,name', 'players:id,game_id,user_id,color', 'players.user:id,name', 'map:id,name'])
+            ->get()
+            ->map(function ($game) use ($userId) {
+                $game->is_player = $game->players->contains('user_id', $userId);
+                return $game;
+            });
 
         return Inertia::render('Games/Kirkconnel/Lobby', [
             'maps'  => $maps,
@@ -203,25 +208,27 @@ class KirkconnelController extends Controller
             abort(403, 'Not your turn.');
         }
 
-        $type = $request->input('type');
+        $type       = $request->input('type');
+        $lastAction = null;
 
         match ($type) {
             'place'   => $this->handlePlace($game, $player, $request),
-            'attack'  => $this->handleAttack($game, $player, $request),
+            'attack'  => ($lastAction = $this->handleAttack($game, $player, $request)),
             'fortify' => $this->handleFortify($game, $player, $request),
             'endturn' => $this->handleEndTurn($game, $player),
             default   => abort(422, 'Unknown action'),
         };
 
-        broadcast(new KirkconnelGameUpdated($game->fresh()));
+        broadcast(new KirkconnelGameUpdated($game->fresh(), $lastAction));
 
         $updated = $game->fresh();
         $updated->load('players.user');
 
         return response()->json([
-            'ok'      => true,
-            'game'    => $updated->only(['id','status','current_turn','round','state','winner_id']),
-            'players' => $updated->players->map(fn($p) => [
+            'ok'         => true,
+            'last_action' => $lastAction,
+            'game'       => $updated->only(['id','status','current_turn','round','state','winner_id']),
+            'players'    => $updated->players->map(fn($p) => [
                 'id'             => $p->id,
                 'user_id'        => $p->user_id,
                 'name'           => $p->user->name,
@@ -277,7 +284,7 @@ class KirkconnelController extends Controller
         $game->update(['state' => $state]);
     }
 
-    private function handleAttack(KirkconnelGame $game, KirkconnelGamePlayer $player, Request $request): void
+    private function handleAttack(KirkconnelGame $game, KirkconnelGamePlayer $player, Request $request): array
     {
         $request->validate(['from' => 'required', 'to' => 'required', 'armies' => 'required|integer|min:1']);
 
@@ -335,6 +342,17 @@ class KirkconnelController extends Controller
         if ($owners->count() === 1) {
             $game->update(['status' => 'finished', 'winner_id' => $player->user_id]);
         }
+
+        return [
+            'type'         => 'attack',
+            'from'         => (int) $request->from,
+            'to'           => (int) $request->to,
+            'success'      => $to['owner'] === $player->user_id,
+            'attackRolls'  => $attackRolls,
+            'defendRolls'  => $defendRolls,
+            'attackLoss'   => $attackLoss,
+            'defendLoss'   => $defendLoss,
+        ];
     }
 
     private function handleFortify(KirkconnelGame $game, KirkconnelGamePlayer $player, Request $request): void
