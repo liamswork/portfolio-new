@@ -5,7 +5,7 @@ defineProps({
 </script>
 
 <template>
-    <footer class="py-16 text-center text-xl text-secondary bg-primary border-t border-secondary/10">
+    <footer class="py-16 text-center text-xl text-black dark:text-white/70 bg-red-600">
         <h2>Footer</h2>
     </footer>
 </template>
